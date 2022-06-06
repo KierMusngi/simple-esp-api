@@ -34,29 +34,35 @@ TaskHandle_t task_triggerAlarm_handler = NULL;
 
 // States
 int alarmCount = 0;
-bool isFlapClosed = false;
+bool isGateClosed = false;
+bool isGateSecured = true;
 
 void closeGate() {
-  digitalWrite(RELAY_MOTOR_A, LOW);
-  digitalWrite(RELAY_MOTOR_B, HIGH);
-  isFlapClosed = true;
-  Serial.println("Gate is closing");
-  server.send(200, "application/json", "Flap opening");
+  if (!isGateClosed){
+    digitalWrite(RELAY_MOTOR_A, LOW);
+    digitalWrite(RELAY_MOTOR_B, HIGH);
+    isGateClosed = true;
+    Serial.println("Gate is closing");
+  }
+  server.send(200, "application/json", "Gate is closing");
 }
 
 void openGate() {
-  digitalWrite(RELAY_MOTOR_A, HIGH);
-  digitalWrite(RELAY_MOTOR_B, LOW);
-  isFlapClosed = false;
-  Serial.println("Gate is opening");
-  server.send(200, "application/json", "Flap closing");
+  if (isGateClosed){
+    digitalWrite(RELAY_MOTOR_A, HIGH);
+    digitalWrite(RELAY_MOTOR_B, LOW);
+    isGateClosed = false;
+    isGateSecured = false;
+    Serial.println("Gate is opening");
+  }
+  server.send(200, "application/json", "Gate is opening");
 }
 
 void stopMotor() {
   digitalWrite(RELAY_MOTOR_A, HIGH);
   digitalWrite(RELAY_MOTOR_B, HIGH);
   Serial.println("Gate motor is stopped");
-  server.send(200, "application/json", "Flap motor stopped");
+  server.send(200, "application/json", "Gate motor stopped");
 }
 
 void openGreen() {
@@ -93,26 +99,6 @@ void closeBuzzer() {
   server.send(200, "application/json", "Buzzer closed");
 }
 
-void generalTestSetup() {
-  openGreen();
-  delay(1000);
-  closeGreen();
-  delay(1000);
-  openRed();
-  delay(1000);
-  closeRed();
-  delay(1000);
-  openBuzzer();
-  delay(1000);
-  closeBuzzer();
-  delay(1000);
-  openBuzzer();
-  delay(1000);
-  closeBuzzer();
-
-  Serial.println("System ready!");
-}
-
 // Tasks
 void task_detectPassBy(void * parameter) {
   for (;;) {
@@ -120,7 +106,7 @@ void task_detectPassBy(void * parameter) {
     if (buttonStateFalling != lastButtonStateFalling) {
       if (buttonStateFalling == HIGH) {
         buttonFallingEdge = 1;
-        if (isFlapClosed && alarmCount == 0 && task_triggerAlarm_handler != NULL) {
+        if (isGateSecured && alarmCount == 0 && task_triggerAlarm_handler != NULL) {
           vTaskResume(task_triggerAlarm_handler);
           Serial.println("Intruder alert!");
         }
@@ -164,7 +150,6 @@ void setup_routing() {
   server.on("/closeRed", closeRed);
   server.on("/openBuzzer", openBuzzer);
   server.on("/closeBuzzer", closeBuzzer);
-  server.on("/test", generalTestSetup);
  
   // Start server
   server.begin();
@@ -190,8 +175,6 @@ void connect_to_wifi() {
   Serial.println(WiFi.localIP());
   digitalWrite(LED_NETWORK, HIGH);
 }
-
-
 
 void setup() {
   // put your setup code here, to run once:
@@ -221,7 +204,7 @@ void setup() {
   xTaskCreate(
     task_detectPassBy,
     "Detect if a human passed by",
-    1000,
+    10000,
     NULL,
     1,
     NULL
@@ -230,9 +213,9 @@ void setup() {
   xTaskCreate(
     task_triggerAlarm,
     "Alarms when an intruder passed by",
-    1000,
+    10000,
     NULL,
-    2,
+    1,
     &task_triggerAlarm_handler
   );
 
@@ -245,14 +228,15 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly: 
-  if (isFlapClosed && digitalRead(LIMIT_SWITCH_CLOSED) == HIGH) {
+  if (isGateClosed && digitalRead(LIMIT_SWITCH_CLOSED) == HIGH) {
     stopMotor();
-    Serial.println("Flap is closed");
+    isGateSecured = true;
+    Serial.println("Gate is closed");
   }
 
-  if (!isFlapClosed && digitalRead(LIMIT_SWITCH_OPEN) == HIGH) {
+  if (!isGateClosed && digitalRead(LIMIT_SWITCH_OPEN) == HIGH) {
     stopMotor();
-    Serial.println("Flap is opened");
+    Serial.println("Gate is opened");
   }
 
   server.handleClient();
