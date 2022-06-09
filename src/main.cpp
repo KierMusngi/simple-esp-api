@@ -1,21 +1,24 @@
 #include <Arduino.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
 
-#define LED_NETWORK 2
-#define IR_SENSOR 25
-#define RELAY_LED_GREEN 12
-#define RELAY_LED_RED 14
-#define RELAY_MOTOR_A 27
-#define RELAY_MOTOR_B 26
-#define RELAY_BUZZER 33
-#define RELAY 33
+// Input
+#define LM_SW_CLOSED 34
+#define LM_SW_OPEN 14
+#define IR_SENSOR 35
 
-#define LIMIT_SWITCH_CLOSED 5
-#define LIMIT_SWITCH_OPEN 15
+// Output
+#define NETWORK 2
+#define MOTOR_A 27
+#define MOTOR_B 26
+#define BUZZER 25
+#define GREEN 33
+#define RED 32
 
 const char *SSID = "mguest";
 const char *PWD = "itsnotworkinG12345!@#$%";
+const char *SERVER_NAME = "http://192.168.1.19/esp";
 
 IPAddress local_IP(192, 168, 1, 100);
 IPAddress gateway(192, 168, 1, 1);
@@ -24,79 +27,110 @@ IPAddress primaryDNS(8, 8, 8, 8);
 IPAddress secondaryDNS(8, 8, 4, 4);
 WebServer server(80);
 
+// Task handlers
+
+// States
 int buttonStateFalling = 0;
 int buttonFallingEdge = 1;
 int lastButtonStateFalling = 1;
-int poepleCount = 0;
+int alarmCount = 6;
+int gateSecured = true;
+bool gateIsClosing = false;
+bool gateIsOpening = false;
 
-// Task handlers
-TaskHandle_t task_triggerAlarm_handler = NULL;
-
-// States
-int alarmCount = 0;
-bool isGateClosed = false;
-bool isGateSecured = true;
-
-void closeGate() {
-  if (!isGateClosed){
-    digitalWrite(RELAY_MOTOR_A, LOW);
-    digitalWrite(RELAY_MOTOR_B, HIGH);
-    isGateClosed = true;
-    Serial.println("Gate is closing");
-  }
-  server.send(200, "application/json", "Gate is closing");
+// Functions
+void func_greenOn() {
+  digitalWrite(GREEN, LOW);
+  Serial.println("Green LED is on");
 }
 
-void openGate() {
-  if (isGateClosed){
-    digitalWrite(RELAY_MOTOR_A, HIGH);
-    digitalWrite(RELAY_MOTOR_B, LOW);
-    isGateClosed = false;
-    isGateSecured = false;
-    Serial.println("Gate is opening");
+void func_greenOff() {
+  digitalWrite(GREEN, HIGH);
+  Serial.println("Green LED is off");
+}
+
+void func_redOn() {
+  digitalWrite(RED, LOW);
+  Serial.println("Red LED is on");
+}
+
+void func_redOff() {
+  digitalWrite(RED, HIGH);
+  Serial.println("Red LED is off");
+}
+void func_stopGate() {
+  digitalWrite(MOTOR_A, HIGH);
+  digitalWrite(MOTOR_B, HIGH);
+  gateIsClosing = false;
+  gateIsOpening = false;
+  func_greenOff();
+  func_redOn();
+  Serial.println("Gate stopped");
+}
+
+void func_openGate() {
+  digitalWrite(MOTOR_A, HIGH);
+  digitalWrite(MOTOR_B, LOW);
+  gateIsClosing = false;
+  gateIsOpening = true;
+  func_redOff();
+  func_greenOn();
+  Serial.println("Gate is opening");
+}
+
+void func_closeGate() {
+  digitalWrite(MOTOR_A, LOW);
+  digitalWrite(MOTOR_B, HIGH);
+  gateIsClosing = true;
+  gateIsOpening = false;
+  Serial.println("Gate is closing");
+}
+
+void func_buzzerOn() {
+  digitalWrite(BUZZER, LOW);
+  Serial.println("Buzzer is on");
+}
+
+void func_buzzerOff() {
+  digitalWrite(BUZZER, HIGH);
+  Serial.println("Buzzer is off");
+}
+
+void func_triggerAlarm() {
+  for (int i=0; i<alarmCount; i++) {
+    func_buzzerOn();
+    delay(200);
+    func_buzzerOff();
+    delay(200);
   }
+}
+
+void func_systemReady() {
+  for (int i=0; i<2; i++) {
+    func_buzzerOn();
+    delay(200);
+    func_buzzerOff();
+    delay(200);
+  }
+}
+
+// API endpoints
+void openGate() {
+  func_openGate();
   server.send(200, "application/json", "Gate is opening");
 }
 
-void stopMotor() {
-  digitalWrite(RELAY_MOTOR_A, HIGH);
-  digitalWrite(RELAY_MOTOR_B, HIGH);
-  Serial.println("Gate motor is stopped");
-  server.send(200, "application/json", "Gate motor stopped");
+void closeGate() {
+  func_closeGate();
+  server.send(200, "application/json", "Gate is closing");
 }
 
-void openGreen() {
-  digitalWrite(RELAY_LED_GREEN, LOW);
-  Serial.println("Green light open");
-  server.send(200, "application/json", "Green LED open");
-}
+// Setup server API endpoints
+void setup_routing() {
+  server.on("/open-gate", openGate);
+  server.on("/close-gate", closeGate);
 
-void closeGreen() {
-  digitalWrite(RELAY_LED_GREEN, HIGH);
-  Serial.println("Green light closed");
-  server.send(200, "application/json", "Green LED closed");
-}
-
-void openRed() {
-  digitalWrite(RELAY_LED_RED, LOW);
-  Serial.println("Red light open");
-  server.send(200, "application/json", "Red LED open");
-}
-
-void closeRed() {
-  digitalWrite(RELAY_LED_RED, HIGH);
-  Serial.println("Red light closed");
-  server.send(200, "application/json", "Red LED closed");
-}
-
-void openBuzzer() {
-  digitalWrite(RELAY_BUZZER, LOW);
-  server.send(200, "application/json", "Buzzer open");
-}
-
-void closeBuzzer() {
-  digitalWrite(RELAY_BUZZER, HIGH);
-  server.send(200, "application/json", "Buzzer closed");
+  server.begin();
 }
 
 // Tasks
@@ -106,13 +140,14 @@ void task_detectPassBy(void * parameter) {
     if (buttonStateFalling != lastButtonStateFalling) {
       if (buttonStateFalling == HIGH) {
         buttonFallingEdge = 1;
-        if (isGateSecured && alarmCount == 0 && task_triggerAlarm_handler != NULL) {
-          vTaskResume(task_triggerAlarm_handler);
-          Serial.println("Intruder alert!");
+        // Logic here
+        if (gateSecured) {
+          func_triggerAlarm();
+          Serial.println("Intruder entered");
         }
         else {
-          Serial.println("Human passed");
-          closeGate();
+          func_closeGate();
+          Serial.println("Guest entered");
         }
       }
     }
@@ -123,38 +158,16 @@ void task_detectPassBy(void * parameter) {
   }
 }
 
-void task_triggerAlarm(void * parameter) {
-  for (;;) {
-    digitalWrite(RELAY_BUZZER, LOW);
-    delay(500);
-    digitalWrite(RELAY_BUZZER, HIGH);
-    delay(500);
-    alarmCount++;
-    Serial.println("Buzz! Intruder Alert!");
-    if (alarmCount >= 3){
-      alarmCount = 0;
-      vTaskSuspend(NULL);
+void task_manageGate(void * parameter) {
+  for(;;) {
+    delay(200);
+    if ((gateIsClosing && !digitalRead(LM_SW_CLOSED)) || (gateIsOpening && !digitalRead(LM_SW_OPEN))) {
+      func_stopGate();
     }
   }
 }
 
-// Setup API resources
-void setup_routing() {
-  // Endpoints
-  server.on("/openGate", openGate);
-  server.on("/closeGate", closeGate);
-  server.on("/stopMotor", stopMotor);
-  server.on("/openGreen", openGreen);
-  server.on("/closeGreen", closeGreen);
-  server.on("/openRed", openRed);
-  server.on("/closeRed", closeRed);
-  server.on("/openBuzzer", openBuzzer);
-  server.on("/closeBuzzer", closeBuzzer);
- 
-  // Start server
-  server.begin();
-}
-
+// Network setup
 void connect_to_wifi() {
   Serial.print("Connecting to ");
   Serial.println(SSID);
@@ -173,71 +186,64 @@ void connect_to_wifi() {
  
   Serial.print("Connected. IP: ");
   Serial.println(WiFi.localIP());
-  digitalWrite(LED_NETWORK, HIGH);
 }
 
 void setup() {
-  // put your setup code here, to run once:
   Serial.begin(115200);
 
+  // Input pin modes
+  pinMode(LM_SW_CLOSED, INPUT);
+  pinMode(LM_SW_OPEN, INPUT);
   pinMode(IR_SENSOR, INPUT);
-  pinMode(LIMIT_SWITCH_CLOSED, INPUT_PULLDOWN);
-  pinMode(LIMIT_SWITCH_OPEN, INPUT_PULLDOWN);
 
-  pinMode(LED_NETWORK, OUTPUT);
-  pinMode(RELAY_LED_GREEN, OUTPUT);
-  pinMode(RELAY_LED_RED, OUTPUT);
-  pinMode(RELAY_MOTOR_A, OUTPUT);
-  pinMode(RELAY_MOTOR_B, OUTPUT);
-  pinMode(RELAY_BUZZER, OUTPUT);
+  //Output pin modes
+  pinMode(NETWORK, OUTPUT);
+  pinMode(MOTOR_A, OUTPUT);
+  pinMode(MOTOR_B, OUTPUT);
+  pinMode(BUZZER, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+  pinMode(RED, OUTPUT);
 
-  digitalWrite(LED_NETWORK, LOW);
-  digitalWrite(RELAY_LED_GREEN, HIGH);
-  digitalWrite(RELAY_LED_RED, HIGH);
-  digitalWrite(RELAY_MOTOR_A, HIGH);
-  digitalWrite(RELAY_MOTOR_B, HIGH);
-  digitalWrite(RELAY_BUZZER, HIGH);
+  // Initial output states
+  digitalWrite(NETWORK, LOW);
+  digitalWrite(MOTOR_A, HIGH);
+  digitalWrite(MOTOR_B, HIGH);
+  digitalWrite(BUZZER, HIGH);
+  digitalWrite(GREEN, HIGH);
+  digitalWrite(RED, HIGH);
 
+  // Connect to network and setup APIs
   connect_to_wifi();
   setup_routing();
+  digitalWrite(NETWORK, HIGH); // ESP32 is connected to network
 
+  // Initialize tasks
   xTaskCreate(
-    task_detectPassBy,
-    "Detect if a human passed by",
+    task_manageGate,
+    "Manage stop for opening and closing gate",
     10000,
     NULL,
     1,
     NULL
   );
 
-  xTaskCreate(
-    task_triggerAlarm,
-    "Alarms when an intruder passed by",
-    10000,
-    NULL,
-    1,
-    &task_triggerAlarm_handler
-  );
+  // xTaskCreate(
+  //   task_detectPassBy,
+  //   "Detect if a human passed by",
+  //   10000,
+  //   NULL,
+  //   1,
+  //   NULL
+  // );
+  
+  // Startup
+  func_systemReady();
+  delay(2000);
+  func_closeGate();
 
-  if (task_triggerAlarm_handler != NULL) vTaskSuspend(task_triggerAlarm_handler);
-
-  if (!digitalRead(LIMIT_SWITCH_CLOSED)) {
-    closeGate();
-  }
+  Serial.println("System Ready!");
 }
 
 void loop() {
-  // put your main code here, to run repeatedly: 
-  if (isGateClosed && digitalRead(LIMIT_SWITCH_CLOSED) == HIGH) {
-    stopMotor();
-    isGateSecured = true;
-    Serial.println("Gate is closed");
-  }
-
-  if (!isGateClosed && digitalRead(LIMIT_SWITCH_OPEN) == HIGH) {
-    stopMotor();
-    Serial.println("Gate is opened");
-  }
-
   server.handleClient();
 }
