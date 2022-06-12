@@ -16,9 +16,11 @@
 #define GREEN 33
 #define RED 32
 
-const char *SSID = "mguest";
-const char *PWD = "itsnotworkinG12345!@#$%";
+const char *SSID = "EAP-110";
+const char *PWD = "4SuKfR%DHeFweqD";
+
 const char *SERVER_NAME = "http://192.168.1.19/esp";
+
 
 IPAddress local_IP(192, 168, 1, 100);
 IPAddress gateway(192, 168, 1, 1);
