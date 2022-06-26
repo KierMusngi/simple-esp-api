@@ -74,6 +74,7 @@ void func_openGate() {
   gateIsClosing = false;
   gateIsOpening = true;
   func_greenOn();
+  gateSecured = false;
   Serial.println("Gate is opening");
 }
 
@@ -154,6 +155,7 @@ void setup_routing() {
 
 // Tasks
 void task_detectPassBy(void * parameter) {
+  delay(1000);
   for (;;) {
     buttonStateFalling = digitalRead(IR_SENSOR);
     if (buttonStateFalling != lastButtonStateFalling) {
@@ -165,8 +167,8 @@ void task_detectPassBy(void * parameter) {
           Serial.println("Intruder entered");
         }
         else {
-          func_closeGate();
           Serial.println("Guest entered");
+          func_closeGate();
         }
       }
     }
@@ -182,7 +184,10 @@ void task_manageGate(void * parameter) {
     delay(200);
     if ((gateIsClosing && !digitalRead(LM_SW_CLOSED)) || (gateIsOpening && !digitalRead(LM_SW_OPEN))) {
       func_stopGate();
-      if (!digitalRead(LM_SW_CLOSED)) func_greenOff();
+      if (!digitalRead(LM_SW_CLOSED)) {
+        gateSecured = true;
+        func_greenOff();
+      }
     }
   }
 }
@@ -246,14 +251,14 @@ void setup() {
     NULL
   );
 
-  // xTaskCreate(
-  //   task_detectPassBy,
-  //   "Detect if a human passed by",
-  //   10000,
-  //   NULL,
-  //   1,
-  //   NULL
-  // );
+  xTaskCreate(
+    task_detectPassBy,
+    "Detect if a human passed by",
+    10000,
+    NULL,
+    1,
+    NULL
+  );
   
   // Startup
   func_systemReady();
