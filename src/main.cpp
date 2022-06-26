@@ -65,8 +65,6 @@ void func_stopGate() {
   digitalWrite(MOTOR_B, HIGH);
   gateIsClosing = false;
   gateIsOpening = false;
-  func_greenOff();
-  func_redOn();
   Serial.println("Gate stopped");
 }
 
@@ -75,7 +73,6 @@ void func_openGate() {
   digitalWrite(MOTOR_B, LOW);
   gateIsClosing = false;
   gateIsOpening = true;
-  func_redOff();
   func_greenOn();
   Serial.println("Gate is opening");
 }
@@ -116,6 +113,20 @@ void func_systemReady() {
   }
 }
 
+void func_alarm() {
+  Serial.println("Alarm triggered");
+  func_redOn();
+  for (int i=0; i<3; i++) {
+    func_buzzerOn();
+    delay(1000);
+    func_buzzerOff();
+    delay(1000);
+  }
+  delay(200);
+  func_redOff();
+  Serial.println("Alarm done");
+}
+
 // API endpoints
 void openGate() {
   func_openGate();
@@ -127,10 +138,16 @@ void closeGate() {
   server.send(200, "application/json", "Gate is closing");
 }
 
+void alarmSystem() {
+  func_alarm();
+  server.send(200, "application/json", "Alarm triggered");
+}
+
 // Setup server API endpoints
 void setup_routing() {
   server.on("/open-gate", openGate);
   server.on("/close-gate", closeGate);
+  server.on("/alarm", alarmSystem);
 
   server.begin();
 }
@@ -165,6 +182,7 @@ void task_manageGate(void * parameter) {
     delay(200);
     if ((gateIsClosing && !digitalRead(LM_SW_CLOSED)) || (gateIsOpening && !digitalRead(LM_SW_OPEN))) {
       func_stopGate();
+      if (!digitalRead(LM_SW_CLOSED)) func_greenOff();
     }
   }
 }
@@ -208,11 +226,10 @@ void setup() {
 
   // Initial output states
   digitalWrite(NETWORK, LOW);
-  digitalWrite(MOTOR_A, HIGH);
-  digitalWrite(MOTOR_B, HIGH);
-  digitalWrite(BUZZER, HIGH);
-  digitalWrite(GREEN, HIGH);
-  digitalWrite(RED, HIGH);
+  func_stopGate();
+  func_buzzerOff();
+  func_greenOff();
+  func_redOff();
 
   // Connect to network and setup APIs
   connect_to_wifi();
